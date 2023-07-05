@@ -1,0 +1,361 @@
+---
+title: "Credit Fraud Detection"
+author: "Muhamad Ilyas Haikal"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# knitr::opts_chunk$set(error = F, message = F, # tidy = T,
+#                       cache = T, warning = T, 
+#                       results = 'hide', # suppress code output
+#                       echo = F,         # suppress code
+#                       fig.show = 'hide' # suppress plots
+#                       )
+library(tidyverse)
+library(e1071)
+library(caret)
+library(ROCR)
+library(partykit)
+library(rsample)
+library(randomForest)
+library(vembedr)
+library(dbplyr)
+
+```
+# 1. Introduction 
+
+### The purpose of this project
+Every year, fraudulent transactions with credit cards result in billions of dollars in losses. The key to minimizing these losses is the development of effective fraud detection algorithms, and increasingly, these algorithms depend on cutting-edge machine learning methods to assist fraud investigators. However, designing fraud detection algorithms is particularly challenging due to the non-stationary distributions of the data, the extremely imbalanced classification distributions, and the continuous streams of transactions. Moreover, obtaining publicly available information is difficult due to confidentiality concerns, which leaves many questions unanswered regarding how to approach this problem
+
+### Some facts you need to know about Credit Card Fraud
+- Over 127 million adults in America, which is nearly half of the population, have encountered fraudulent transactions on their credit or debit cards. This highlights the widespread nature of card fraud and its impact on individuals.
+
+- More than one in three people who use credit or debit cards have experienced card fraud multiple times. This indicates that card fraud is not an isolated incident but a recurring problem for a significant portion of card users.
+
+- The average fraudulent charge on American credit and debit cards amounts to $62 per transaction. This translates to an estimated total of approximately $8 billion in attempted fraudulent transactions. This staggering amount underscores the financial impact and magnitude of card fraud.
+
+- Only around 40% of cardholders have activated email or text notifications from their banks or credit card issuers. This means that a large percentage of cardholders may not receive immediate alerts about potentially fraudulent activities on their cards.
+
+- Among the victims who have enabled notifications, only 19% had to take further action to reverse fraudulent charges. In contrast, approximately 81% of victims who did not have these warnings had to undertake additional measures. This indicates the effectiveness of timely notifications in minimizing the potential consequences of fraudulent charges.
+
+```{r}
+library(vembedr)
+embed_youtube("c-DxF1XVATw")
+```
+### Why can this machine learning model be useful for Credit Fraud Detection?
+To find patterns of fraud, credit card fraud detection (CCFD) needs to analyze vast amounts of transaction data. Due to the large data volumes and the constantly evolving tactics of fraudsters, human investigators are unable to effectively address this issue. Over the past decade, machine learning (ML) methods have become an increasingly important component of CCFD as they enable searching and detecting patterns in extensive data sets. It has been demonstrated that ML algorithms can significantly enhance the effectiveness of fraud detection systems and aid fraud investigators in identifying fraudulent transactions.
+
+The model that demonstrates the highest predicted performance in detecting fraud within a specific set of transactions is considered the optimal model for a fraud detection system. By leveraging historical credit card transaction data, we attempted to estimate and predict future fraudulent transactions. Consequently, if fraudulent activities can be forecasted, it would assist fraud investigators in better proposing policies for real-world regulations.
+
+# 2. Dataset Overview 
+ULB’s dataset from Kaggle -> https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud
+
+The dataset contains credit card transactions done by European cardholders in September 2013. This dataset presents transactions that occurred in two days, where we have 492 frauds out of 284,807 transactions. The dataset is quite unbalanced, with frauds making up 0.172% of all transactions in the positive class (frauds) account.
+There are 284807 observations and 31 columns in this dataset. There are 1 response variable and 30 predictor variables. Additionally, 30 of them are numerical, while 1 is binary. The response variable, “Class,” has a value of 1 in cases of fraud and 0 in all other cases. 
+
+### Loading Data and Packages
+```{r}
+#read data
+raw_data <- read.csv("creditcard.csv")
+head(raw_data)
+```
+
+```{r}
+summary(raw_data)
+```
+```{r}
+# Check data Types
+glimpse(raw_data)
+```
+# 3 Data Cleansing 
+Let’s now determine whether or not our response variable class is balanced. If not, we must resolve the situation.
+```{r}
+table(raw_data$Class)
+```
+We can tell our response variable class is highly unbalanced. Observations on “0” class are far more frequent than “1” class. We need to use some functions to address this problem, otherwise this will have a significant impact on our prediction models
+
+```{r}
+
+# Displaying the class distribution before downsampling.
+cat("Distribution before downsampling:\n")
+table(raw_data$Class)
+
+# Determining the number of samples to be retained from the minority class.
+n_minority <- sum(raw_data$Class == "1")  # Number of samples in the minority class
+
+# Obtaining the indices of samples in the majority class
+majority_indices <- which(raw_data$Class == "0")
+
+# Performing random sampling on the indices of the majority class.
+downsampled_indices <- sample(majority_indices, n_minority)
+
+# Combining the downsampled indices of the majority class with the indices of the minority class
+downsampled_indices <- c(downsampled_indices, which(raw_data$Class == "1"))
+
+# Creating a new dataset that has been downsampled based on the combined indices of the majority and minority classes
+downsampled_data <- raw_data[downsampled_indices, ]
+
+# Displaying the class distribution after downsampling.
+cat("\nDistribution after downsampling:\n")
+table(downsampled_data$Class)
+
+# Saving the downsampled data to a CSV file.
+write.csv(downsampled_data, "creditcard_downsampled.csv", row.names = FALSE)
+
+creditc <- downsampled_data
+
+```
+```{r}
+# Convert class to factor
+creditc <- creditc %>%
+  mutate(Class = factor(Class, levels = c("1", "0"))) 
+```
+
+
+```{r}
+#Summary
+summary(creditc$Amount)
+```
+
+```{r}
+var(creditc$Amount)
+```
+
+```{r}
+# show how many observations and variables in the new dataset
+dim(creditc) 
+```
+
+
+```{r}
+#Clean name
+creditc$Amount <- scale(creditc$Amount)
+head(creditc)
+```
+We completed the the process of data cleaning.
+
+# 4. Data Split
+The data was stratified sampling by Class , and spitted to 70% training set and 30% testing set.
+
+```{r}
+set.seed(2022)
+creditc_split <- initial_split(creditc, prop = 0.70, strata = Class)
+# Training Dataset
+creditc_train <- training(creditc_split)
+# Testing Dataset
+creditc_test <- testing(creditc_split)
+
+# check dimension
+dim(creditc_train)
+```
+
+```{r}
+dim(creditc_test)
+```
+- The training data has 688 observations.
+- The testing data has 296 observations.
+
+# 5. Data Exploration
+After employing the ovun.sample() function to processing the data, we can see that the number of card fraud is balanced from the table
+```{r}
+table(creditc_train$Class)
+```
+
+#### Target Variable Data Transformation and Analysis
+```{r}
+## Target Variable `amount` Analysis
+creditc_train$Amount %>% summary()
+```
+
+```{r}
+creditc_train %>% ggplot(aes(Amount)) +
+  geom_histogram(bins=30) +
+  scale_x_log10() +
+  labs(
+  x = "Dollar Amount (Log Scale)", y = "Frequency (Count)",
+  title= "Distribution of Transaction Amount (Log Scaled)"
+ )
+```
+
+-> Target Variable amount Analysis
+
+There will be minimal probability for any outliers among the data values for V1, V2,…, V28 since the majority of predictors have been modified. Therefore, as Amount is the only useful numerical attribute, we shall just look at it.
+
+```{r}
+creditc_train %>% ggplot(aes(x=Amount)) +
+  geom_boxplot() +
+  labs(x = "Amount ($USD)", title= "Distribution of Transaction Amount")
+```
+
+We can see a significant number of outliers on the higher end of the distribution from the boxplot above. It would signify transactions involving large amounts of money in thousands. When developing the predictive models, we would consider how this skewed distribution might affect data transformation or the choice of models that are resistant to such feature types.
+
+In order to analysis the variable time, we will examine transaction time to look for any abnormalities. We will create a scatterplot using only the fraud dataset.
+
+```{r}
+## Target Variable `time` Analysis
+## Are there any tendency in time where fraud occurred?
+# Splitting data by fraud class
+CC_no_fraud <- creditc_train %>% filter(Class == 0)
+CC_fraud <- creditc_train %>% filter(Class == 1)
+# Scatterplot
+
+# Scatterplot
+
+CC_fraud %>% ggplot(aes(x=Time, y=Amount)) +
+  geom_point() +
+  labs(
+  y = "Amount ($)", 
+  x = "Time (s)",
+  title= "Fraudulent Transactions Across Time"
+ )
+```
+
+-> Target Variable time Analysis
+
+There doesn’t seem to be a clustering structure on a timespan in the graph above. Therefore, we would suppose that fraud happened relatively randomly throughout time.
+
+# 6. Model fitting
+The goal of model selection is to choose the model that will produce the best predictions on upcoming data. The model with the highest predicted fraud detection performances on the following block of transactions is the optimal model for a fraud detection system
+```{r}
+library(tidymodels)
+
+# Define the recipe for data preprocessing
+creditc_recipe <- recipe(Class ~ ., data = creditc_train) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_normalize(all_predictors())
+```
+
+### Model Logistic Regression
+```{r}
+library(tidymodels)
+
+# Define the logistic regression model
+log_reg <- logistic_reg() %>% 
+  set_engine("glm") %>% 
+  set_mode("classification")
+
+# Create a workflow with the logistic regression model and recipe
+log_wkflow <- workflow() %>% 
+  add_model(log_reg) %>% 
+  add_recipe(creditc_recipe)
+
+# Fit the model using the workflow and training data
+log_fit <- fit(log_wkflow, data = creditc_train)
+
+```
+
+#### Fitting testing data
+```{r}
+# Perform predictions on the test data
+log_test <- predict(log_fit, new_data = creditc_test) %>% 
+  bind_cols(creditc_test %>% select(Class))
+```
+
+```{r}
+# Calculate accuracy
+accuracy(log_test, truth = Class, estimate = .pred_class)
+```
+Based on the table, we can see that the Logistic Regression model did a great prediction with 0.9256757 accuracy.
+
+#### Confusion matrix
+```{r}
+library(yardstick)
+library(ggplot2)
+
+log_test %>%
+  conf_mat(truth = Class, estimate = .pred_class) %>% 
+  autoplot(type = "heatmap")
+```
+#### ROC
+```{r}
+# Generate predictions and calculate AUC
+log_predictions <- predict(log_fit, creditc_test, type = "prob")
+log_test <- tibble::add_column(creditc_test, .pred_1 = log_predictions$.pred_1)
+
+# Plot the ROC curve
+log_test %>%
+  roc_curve(Class, .pred_1) %>%
+  autoplot()
+```
+```{r}
+# Generate predictions and calculate AUC
+log_predictions <- predict(log_fit, creditc_test, type = "prob")
+log_test <- tibble::add_column(creditc_test, .pred_1 = log_predictions$.pred_1)
+
+# Plot the ROC curve
+log_test %>%
+  roc_auc(Class, .pred_1)
+  
+```
+The reliability of our model is also confirmed by the confusion matrix, 0.9324324 accuracy, and 0.9732012	 ROC_AUC solid performance. There are 288 of the 291 observations in the matrix were correctly predicted by the Logistic Regression, and the curve is virtually at the left-top corner.
+
+
+
+
+### Model Nearest Neighbors
+The Nearest Neighbor model is then applied. Folding the training data is where we start. Utilize k-fold cross-validation with k=5.
+
+```{r}
+creditc_fold <- vfold_cv(creditc_train, v = 5, strata = Class)
+```
+#### Set up
+```{r}
+knn_model <- nearest_neighbor(neighbors = tune(),
+            mode = "classification") %>% 
+            set_engine("kknn")
+
+knn_workflow <- workflow() %>% 
+  add_model(knn_model) %>% 
+  add_recipe(creditc_recipe)
+
+# set-up tuning grid 
+knn_params <- parameters(knn_model)
+
+# define grid
+knn_grid <- grid_regular(knn_params, levels = 2)
+```
+#### Tune the model
+```{r}
+knn_tune <- knn_workflow %>% 
+  tune_grid(resamples = creditc_fold, 
+            grid = knn_grid)
+```
+
+```{r}
+arrange(collect_metrics(knn_tune),desc(mean))
+```
+#### Fit the Knearest model
+I using the best parameter to fit the model.
+```{r}
+best_comp <- select_best(knn_tune, metric = "roc_auc")
+creditc_final <- finalize_workflow(knn_workflow, best_comp)
+knn_fit <- fit(creditc_final,data = creditc_train)
+
+augment(knn_fit, new_data = creditc_test) %>%
+  accuracy(truth = Class, estimate = .pred_class)
+```
+#### Confusion matrix
+We can use the heat map to clearly see the prediction.
+```{r}
+augment(knn_fit, new_data = creditc_test) %>%
+  conf_mat(truth = Class, estimate = .pred_class) %>%
+  autoplot(type = "heatmap")
+```
+```{r}
+# Calculate AUC
+augment(knn_fit, new_data = creditc_test) %>%
+  roc_auc(Class, .pred_1)
+```
+We can see the Nearest Neighbors have 0.9087838	 accuracy and high ROC_AUC with 0.9485482 and have successful predicted 269 of 296 observations from the matrix.
+
+
+# 7. Conclusion
+Credit card fraud detection is a challenging problem that requires analyzing large amounts of transaction data to identify patterns of fraud. For the purposes of this project, I trained two prediction models to perform the same forecasting task and then compared the results to decide the final "best" forecast model with the highest accuracy. I tried to deal with imbalanced datasets using a sampling technique, specifically a credit card fraud transaction dataset where the proportion of fraudulent cases to total transactions is quite small. Since I balanced the data before training the model, I can use both the confusion matrix accuracy and the accuracy using the Area Under the Precision-Recall Curve (AUC) to analyze the predictions of my models. Although  Nearest Neighbors models performed well, the Logistic Regression model yielded the highest accuracy of 0.9324324 with an AUC of 0.9732012.  I will present the Logistic Regression as my final model. The hope is that in the near future, more accurate fraud detection systems can be developed to assist fraud investigators in detecting fraudulent transactions and proposing better policies for real-world regulation.
+
+# 8.Refrences
+
+- https://fraud-detection-handbook.github.io/fraud-detection-handbook/Chapter_References/shared_functions.html
+- https://rpubs.com/VicNP/UBL-SmoteClassif
+- https://www.security.org/digital-safety/credit-card-fraud-report/
